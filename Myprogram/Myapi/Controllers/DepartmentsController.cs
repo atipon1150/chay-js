@@ -1,123 +1,92 @@
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using Myapi.Models;
+using Microsoft.AspNetCore.Mvc;  // สำหรับ ControllerBase, HttpGet, HttpPost ฯลฯ
+using Microsoft.EntityFrameworkCore;  // สำหรับ Include(), ToListAsync()
+using Myapi.Data;  // สำหรับ AppDbContext
+using Myapi.Models;  // สำหรับ Department, User
 
 namespace Myapi.Controllers
 {
+    // Route ของ API → api/Departments
     [Route("api/[controller]")]
-    [ApiController]
+    [ApiController]  // เพิ่ม validation และ binding อัตโนมัติ
     public class DepartmentsController : ControllerBase
     {
-        private readonly MyDbContext _context;
+        private readonly AppDbContext _context;
 
-        public DepartmentsController(MyDbContext context)
-        {
-            _context = context;
-        }
+        // Constructor รับ AppDbContext ผ่าน dependency injection
+        public DepartmentsController(AppDbContext context) => _context = context;
 
+        // ===============================
         // GET: api/Departments
+        // ===============================
         [HttpGet]
-        public async Task<ActionResult<IEnumerable<Department>>> GetDepartments()
+        public async Task<IActionResult> Get()
         {
-            return await _context.Departments
-                                 .Include(d => d.Users) // ดึง Users ด้วย
-                                 .ToListAsync();
+            // ดึงข้อมูล Departments พร้อม Users ที่เกี่ยวข้อง (1:N)
+            var departments = await _context.Departments
+                                            .Include(d => d.Users)  // join Users table
+                                            .ToListAsync();
+
+            return Ok(departments); // ส่ง 200 + JSON
         }
 
-        // GET: api/Departments/5
-        [HttpGet("{id}")]
-        public async Task<ActionResult<Department>> GetDepartment(int id)
-        {
-            var dept = await _context.Departments
-                                     .Include(d => d.Users)
-                                     .FirstOrDefaultAsync(d => d.Id == id);
-
-            if (dept == null)
-                return NotFound();
-
-            return dept;
-        }
-
+        // ===============================
         // POST: api/Departments
+        // ===============================
         [HttpPost]
-        public async Task<ActionResult<Department>> PostDepartment(Department dept)
+        public async Task<ActionResult<Department>> PostDepartment([FromBody] Department? dept)
         {
+            // ถ้า client ไม่ส่ง dept มา → สร้าง default
             if (dept == null)
-                return BadRequest();
-
-            // เพิ่ม Department
-            _context.Departments.Add(dept);
-            await _context.SaveChangesAsync(); // dept.Id ถูกสร้าง
-
-            // เพิ่ม Users
-            if (dept.Users != null)
             {
-                foreach (var user in dept.Users)
-                {
-                    user.DepartmentId = dept.Id;
-                    _context.Users.Add(user);
-                }
-                await _context.SaveChangesAsync();
+                dept = new Department { Name = "Default Department" };
             }
 
-            return Ok(dept);
+            // ถ้า Name ว่าง → ตั้งชื่อ default
+            if (string.IsNullOrWhiteSpace(dept.Name))
+            {
+                dept.Name = "Default Department";
+            }
+
+            // สร้าง Department ใหม่สำหรับ DB
+            var newDept = new Department
+            {
+                Name = dept.Name
+            };
+
+            _context.Departments.Add(newDept);
+            await _context.SaveChangesAsync();  // บันทึกลง DB → EF Core จะสร้าง Id ให้
+
+            return Ok(newDept); // ส่ง 200 พร้อม Id
         }
 
-        // PUT: api/Departments/5
+        // ===============================
+        // PUT: api/Departments/{id}
+        // ===============================
         [HttpPut("{id}")]
-        public async Task<IActionResult> PutDepartment(int id, Department dept)
+        public async Task<IActionResult> Update(int id, [FromBody] Department dept)
         {
-            if (id != dept.Id)
-                return BadRequest();
+            var existing = await _context.Departments.FindAsync(id);
+            if (existing == null) return NotFound(); // ถ้าไม่มี → 404
 
-            var existingDept = await _context.Departments
-                                             .Include(d => d.Users)
-                                             .FirstOrDefaultAsync(d => d.Id == id);
+            existing.Name = dept.Name;  // อัปเดตชื่อ
+            await _context.SaveChangesAsync();  // บันทึกลง DB
 
-            if (existingDept == null)
-                return NotFound();
-
-            existingDept.Name = dept.Name;
-
-            // อัปเดต Users (ง่ายที่สุด: ลบแล้วเพิ่มใหม่)
-            if (dept.Users != null)
-            {
-                // ลบ Users เก่า
-                _context.Users.RemoveRange(existingDept.Users);
-
-                // เพิ่ม Users ใหม่
-                foreach (var user in dept.Users)
-                {
-                    user.DepartmentId = id;
-                    _context.Users.Add(user);
-                }
-            }
-
-            await _context.SaveChangesAsync();
-            return NoContent();
+            return Ok(existing);  // ส่ง 200 + object ที่อัปเดตแล้ว
         }
 
-        // DELETE: api/Departments/5
+        // ===============================
+        // DELETE: api/Departments/{id}
+        // ===============================
         [HttpDelete("{id}")]
-        public async Task<IActionResult> DeleteDepartment(int id)
+        public async Task<IActionResult> Delete(int id)
         {
-            var dept = await _context.Departments
-                                     .Include(d => d.Users)
-                                     .FirstOrDefaultAsync(d => d.Id == id);
-            if (dept == null)
-                return NotFound();
+            var existing = await _context.Departments.FindAsync(id);
+            if (existing == null) return NotFound(); // ถ้าไม่มี → 404
 
-            // ลบ Users ก่อน
-            if (dept.Users != null && dept.Users.Count > 0)
-            {
-                _context.Users.RemoveRange(dept.Users);
-            }
+            _context.Departments.Remove(existing);  // ลบ Department
+            await _context.SaveChangesAsync();  // บันทึกลง DB
 
-            // ลบ Department
-            _context.Departments.Remove(dept);
-            await _context.SaveChangesAsync();
-
-            return NoContent();
+            return NoContent();  // ส่ง 204 → ไม่มี body
         }
     }
 }
